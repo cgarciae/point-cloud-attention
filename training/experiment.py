@@ -32,7 +32,7 @@ def main(
     ds_train = torch.utils.data.TensorDataset(X_train, y_train)
     ds_test = torch.utils.data.TensorDataset(X_test, y_test)
 
-    model = Model2(params)
+    model = Model(params)
 
     print(f"Parameters: {count_parameters(model)}")
 
@@ -106,8 +106,9 @@ class Model(torch.nn.Module):
 
         # print(x.shape)
         token = torch.tensor([-1.0, 1.0, -1.0])[None, None, :].repeat(batch_size, 1, 1)
-
         x = torch.cat((token, x), 1)
+
+        # print(x.shape)
 
         x = self.embeddings(x)
 
@@ -222,11 +223,12 @@ class Trainer:
         )
 
 
-def plot_batch(x, y):
+def plot_batch(x, y=None):
     import matplotlib.pyplot as plt
 
     plt.scatter(x[0][:, 0], x[0][:, 1])
-    plt.title(f"{y[0]}")
+    if y is not None:
+        plt.title(f"{y[0]}")
     plt.show()
 
 
