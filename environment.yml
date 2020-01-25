@@ -1,0 +1,4 @@
+name: point-cloud-attention
+
+dependencies:
+    - python=3.8

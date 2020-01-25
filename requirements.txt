@@ -1,0 +1,9 @@
+numpy
+torch 
+torchvision
+typer
+pyyaml
+cytoolz
+scikit-learn
+plotly
+matplotlib
