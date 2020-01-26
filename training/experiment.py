@@ -93,11 +93,9 @@ class Model(torch.nn.Module):
         self.classifier_token = torch.nn.parameter.Parameter(torch.rand(1, 1, n_units))
         self.classifier_token.data.uniform_(0.0, 1.0)
 
-        self.self_attention_modules = [
-            torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
-            torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
-            torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
-        ]
+        self.self_attention_modules = torch.nn.ModuleList(
+            [AttentionModule(n_units, n_heads, n_items=101)] * 3
+        )
 
         self.linear_up = torch.nn.Linear(n_units, n_units * n_heads)
 
@@ -129,9 +127,7 @@ class Model(torch.nn.Module):
         # print(x.shape)
 
         for module in self.self_attention_modules:
-            x, _ = module(x, x, x)
-            x = F.relu(x)
-            # print(x.shape)
+            x = module(x)
 
         x = x[0]
 
@@ -142,6 +138,25 @@ class Model(torch.nn.Module):
         # print(x[0])
 
         # print(x.shape)
+
+        return x
+
+
+class AttentionModule(torch.nn.Module):
+    def __init__(self, n_units, n_heads, n_items):
+        super().__init__()
+
+        self.mha = torch.nn.MultiheadAttention(n_units * n_heads, n_heads)
+        self.norm = torch.nn.LayerNorm((n_items, n_units * n_heads))
+        self.activation = torch.nn.ReLU()
+
+    def forward(self, x):
+
+        x0 = x
+        x, _ = self.mha(x, x, x)
+        x = self.norm(x.transpose(1, 0)).transpose(1, 0)
+        x += x0
+        x = self.activation(x)
 
         return x
 
