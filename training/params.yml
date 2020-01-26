@@ -1,9 +1,10 @@
 input_features: 3
 n_labels: 10
 n_units: 64
-n_heads: 4 
-batch_size: 8
+n_heads: 8 
+batch_size: 32
+lr: 0.005
 
-epochs: 100
+epochs: 1000
 steps_per_epoch: 100
 validation_steps: 20

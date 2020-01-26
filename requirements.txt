@@ -1,6 +1,7 @@
 numpy
-torch 
-torchvision
+# torch 
+# torchvision
+tensorflow
 typer
 pyyaml
 cytoolz
