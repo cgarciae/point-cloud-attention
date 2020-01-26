@@ -247,16 +247,9 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         # projections --> [batch_size, length, num_heads, dim_per_head].
         query_input, source_input = inputs
 
-        print("query_input", query_input.shape)
-        print("source_input", source_input.shape)
-
         query = self.query_dense_layer(query_input)
         key = self.key_dense_layer(source_input)
         value = self.value_dense_layer(source_input)
-
-        print("query", query.shape)
-        print("key", key.shape)
-        print("value", value.shape)
 
         # Scale query to prevent the dot product between query and key from growing
         # too large.
@@ -280,8 +273,6 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         # Run the outputs through another linear projection layer. Recombining heads
         # is automatically done --> [batch_size, length, hidden_size]
         attention_output = self.output_dense_layer(attention_output)
-
-        print("output", attention_output.shape)
 
         return attention_output
 
