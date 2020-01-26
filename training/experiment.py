@@ -11,6 +11,12 @@ from sklearn.preprocessing import MinMaxScaler
 np.random.seed(42)
 
 
+def to_cuda(x):
+    if torch.cuda.is_available:
+        return x.cuda()
+    return x
+
+
 def main(
     data_dir: Path = Path("data"),
     params_path: Path = Path("training/params.yml"),
@@ -93,11 +99,13 @@ class Model(torch.nn.Module):
         self.classifier_token = torch.nn.parameter.Parameter(torch.rand(1, 1, n_units))
         self.classifier_token.data.uniform_(0.0, 1.0)
 
-        self.self_attention_modules = [
-            torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
-            torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
-            torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
-        ]
+        self.self_attention_modules = torch.nn.ModuleList(
+            [
+                torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
+                torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
+                torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
+            ]
+        )
 
         self.linear_up = torch.nn.Linear(n_units, n_units * n_heads)
 
@@ -107,7 +115,9 @@ class Model(torch.nn.Module):
         batch_size = x.shape[0]
 
         # print(x.shape)
-        token = torch.tensor([-1.0, 1.0, -1.0])[None, None, :].repeat(batch_size, 1, 1)
+        token = torch.tensor([-1.0, 1.0, -1.0], device=x.device)[None, None, :].repeat(
+            batch_size, 1, 1
+        )
 
         x = torch.cat((token, x), 1)
         # print(x.shape)
@@ -190,6 +200,9 @@ class Trainer:
 
     def fit(self, model, epochs, steps_per_epoch, validation_steps):
 
+        if torch.cuda.is_available:
+            model.cuda()
+
         for epoch in range(epochs):  # loop over the dataset multiple times
 
             running_loss = 0.0
@@ -201,6 +214,9 @@ class Trainer:
             for step, data in enumerate(trainloader):
                 # get the inputs; data is a list of [inputs, labels]
                 inputs, labels = data
+                labels = labels.type(torch.LongTensor)
+                inputs = to_cuda(inputs)
+                labels = to_cuda(labels)
 
                 # plot_batch(inputs.numpy(), labels.numpy())
 
