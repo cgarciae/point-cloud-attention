@@ -1,7 +1,7 @@
 input_features: 3
 n_labels: 10
-n_units: 256
-n_heads: 8 
+n_units: 64
+n_heads: 4 
 batch_size: 8
 
 epochs: 100

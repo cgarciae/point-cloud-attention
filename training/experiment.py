@@ -94,27 +94,37 @@ class Model(torch.nn.Module):
         self.classifier_token.data.uniform_(0.0, 1.0)
 
         self.self_attention_modules = [
-            torch.nn.MultiheadAttention(n_units, n_heads),
-            torch.nn.MultiheadAttention(n_units, n_heads),
-            torch.nn.MultiheadAttention(n_units, n_heads),
+            torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
+            torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
+            torch.nn.MultiheadAttention(n_units * n_heads, n_heads),
         ]
 
-        self.dense_output = torch.nn.Linear(n_units, n_labels)
+        self.linear_up = torch.nn.Linear(n_units, n_units * n_heads)
+
+        self.dense_output = torch.nn.Linear(n_units * n_heads, n_labels)
 
     def forward(self, x):
         batch_size = x.shape[0]
 
         # print(x.shape)
         token = torch.tensor([-1.0, 1.0, -1.0])[None, None, :].repeat(batch_size, 1, 1)
-        x = torch.cat((token, x), 1)
 
+        x = torch.cat((token, x), 1)
         # print(x.shape)
+
+        # plot_batch(x.numpy())
 
         x = self.embeddings(x)
 
         # print(x.shape)
 
         # token = self.classifier_token.repeat(batch_size, 1, 1)
+
+        x = x.transpose(1, 0)
+
+        # print(x.shape)
+
+        x = self.linear_up(x)
 
         # print(x.shape)
 
@@ -123,7 +133,7 @@ class Model(torch.nn.Module):
             x = F.relu(x)
             # print(x.shape)
 
-        x = x[:, 0]
+        x = x[0]
 
         # print(x.shape)
 
