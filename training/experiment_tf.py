@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 import cytoolz as cz
 from sklearn.preprocessing import MinMaxScaler
+import time
 
 from .transformer import MultiHeadSelfAttention
 
@@ -14,14 +15,17 @@ np.random.seed(42)
 def main(
     data_dir: Path = Path("data"),
     params_path: Path = Path("training/params.yml"),
-    dataset_version: str = "100",
+    train_version: str = "max",
+    test_version: str = "200",
 ):
+    model_dir = f"models/{train_version}_{test_version}/{int(time.time())}"
+
     with open(params_path, "r") as f:
         params = yaml.safe_load(f)
 
-    X_train = np.load(data_dir / f"X_train_{dataset_version}.npy")
+    X_train = np.load(data_dir / f"X_train_{train_version}.npy")
     y_train = np.load(data_dir / f"y_train.npy")
-    X_test = np.load(data_dir / f"X_test_{dataset_version}.npy")
+    X_test = np.load(data_dir / f"X_test_{test_version}.npy")
     y_test = np.load(data_dir / f"y_test.npy")
 
     preprocessor = MinMaxScaler(feature_range=(-1, 1))
@@ -48,6 +52,17 @@ def main(
         steps_per_epoch=params["steps_per_epoch"],
         validation_data=(X_test, y_test),
         validation_steps=params["validation_steps"],
+        callbacks=[
+            tf.keras.callbacks.LearningRateScheduler(
+                tf.keras.optimizers.schedules.PiecewiseConstantDecay(
+                    [500, 1200], [0.001, 0.0005, 0.0001]
+                )
+            ),
+            tf.keras.callbacks.ModelCheckpoint(
+                filepath=f"{model_dir}/saved_model", save_best_only=True
+            ),
+            tf.keras.callbacks.TensorBoard(log_dir=model_dir),
+        ],
     )
 
 
@@ -92,8 +107,10 @@ class Model(tf.keras.Model):
         self.embeddings = tf.keras.Sequential(
             [
                 tf.keras.layers.Dense(n_units),
+                tf.keras.layers.LayerNormalization(),
                 tf.keras.layers.Activation("elu"),
                 tf.keras.layers.Dense(n_units),
+                tf.keras.layers.LayerNormalization(),
                 tf.keras.layers.Activation("elu"),
             ]
         )
@@ -154,7 +171,7 @@ class AttentionModule(tf.keras.layers.Layer):
 
         self.mha = MultiHeadSelfAttention(n_units, n_heads)
         self.norm = tf.keras.layers.LayerNormalization()
-        self.activation = tf.nn.relu
+        self.activation = tf.nn.elu
 
     def call(self, x):
 
