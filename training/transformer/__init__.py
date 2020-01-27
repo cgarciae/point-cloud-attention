@@ -1,1 +1,11 @@
-from .attention import MultiHeadAttention, MultiHeadSelfAttention, Dense3D
+from .attention import (
+    DenseMultiHead,
+    MultiHeadAttention,
+    MultiHeadSelfAttention,
+    MultiHeadAttentionBlock,
+    MultiHeadSelfAttentionBlock,
+    InducedMultiHeadAttentionBlock,
+    InducedMultiHeadSelfAttentionBlock,
+    MultiHeadAttentionPooling,
+)
+

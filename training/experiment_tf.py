@@ -7,7 +7,7 @@ import cytoolz as cz
 from sklearn.preprocessing import MinMaxScaler
 import time
 
-from .transformer import MultiHeadSelfAttention
+from . import transformer
 
 np.random.seed(42)
 
@@ -16,7 +16,8 @@ def main(
     data_dir: Path = Path("data"),
     params_path: Path = Path("training/params.yml"),
     train_version: str = "max",
-    test_version: str = "200",
+    test_version: str = "max",
+    model: str = "attention",
 ):
     model_dir = f"models/{train_version}_{test_version}/{int(time.time())}"
 
@@ -33,7 +34,14 @@ def main(
     X_train, y_train = preprocess(X_train, y_train, params, preprocessor, mode="train")
     X_test, y_test = preprocess(X_test, y_test, params, preprocessor, mode="test")
 
-    model = Model(params)
+    if model == "attention":
+        model = AttentionModel(params)
+    elif model == "pooling":
+        model = PoolingModel(params)
+    elif model == "set":
+        model = SetTransformerModel(params)
+    else:
+        raise ValueError(f"Unknown model type: {model}")
 
     model.compile(
         loss=tf.losses.SparseCategoricalCrossentropy(),
@@ -83,7 +91,6 @@ def preprocess(X, y, params, preprocessor, mode):
     X = X.reshape(shape)
 
     X = X.astype(np.float32)
-    # y = y.astype(np.long)
 
     # X = X[: params["batch_size"] * 10]
     # y = y[: params["batch_size"] * 10]
@@ -91,11 +98,109 @@ def preprocess(X, y, params, preprocessor, mode):
     return X, y
 
 
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+class AttentionModel(tf.keras.Model):
+    def __init__(self, params):
+        super().__init__()
+
+        input_features = params["input_features"]
+        n_units = params["n_units"]
+        n_heads = params["n_heads"]
+        n_labels = params["n_labels"]
+        n_units_att = params["n_units_att"]
+
+        self.embeddings = tf.keras.Sequential(
+            [
+                tf.keras.layers.Dense(n_units),
+                tf.keras.layers.LayerNormalization(),
+                tf.keras.layers.Activation("elu"),
+            ]
+            * params["n_dense_layers"]
+        )
+
+        self.self_attention_modules = tf.keras.Sequential(
+            [AttentionModule(n_units_att, n_heads)] * params["n_attention_layers"]
+        )
+
+        self.dense_output = tf.keras.layers.Dense(n_labels, activation="softmax")
+
+    @tf.function
+    def call(self, x):
+        batch_size = tf.shape(x)[0]
+
+        token = tf.constant([-1.0, 1.0, -1.0])[None, None, :]
+        token = tf.tile(token, (batch_size, 1, 1))
+
+        x = tf.concat([token, x], axis=1)
+
+        x = self.embeddings(x)
+        x = self.self_attention_modules(x)
+        x = x[:, 0]
+        x = self.dense_output(x)
+
+        return x
 
 
-class Model(tf.keras.Model):
+class SetTransformerModel(tf.keras.Model):
+    def __init__(self, params):
+        super().__init__()
+
+        input_features = params["input_features"]
+        n_units = params["n_units"]
+        n_heads = params["n_heads"]
+        n_labels = params["n_labels"]
+        n_units_att = params["n_units_att"]
+
+        self.embeddings = tf.keras.Sequential(
+            [
+                tf.keras.layers.Dense(n_units),
+                tf.keras.layers.LayerNormalization(),
+                tf.keras.layers.Activation("relu"),
+            ]
+        )
+
+        self.self_attention_modules = tf.keras.Sequential(
+            [transformer.MultiHeadSelfAttentionBlock(n_units_att, n_heads)]
+            * params["n_attention_layers"]
+        )
+
+        self.attention_pooling = transformer.MultiHeadAttentionPooling(
+            1, n_units_att, n_heads
+        )
+
+        self.dense_output = tf.keras.layers.Dense(n_labels, activation="softmax")
+
+    @tf.function
+    def call(self, x):
+
+        x = self.embeddings(x)
+        x = self.self_attention_modules(x)
+        x = self.attention_pooling(x)
+        x = x[:, 0]
+        x = self.dense_output(x)
+
+        return x
+
+
+class AttentionModule(tf.keras.layers.Layer):
+    def __init__(self, n_units, n_heads):
+        super().__init__()
+
+        self.mha = transformer.MultiHeadSelfAttention(n_units, n_heads)
+        self.norm = tf.keras.layers.LayerNormalization()
+        self.activation = tf.nn.elu
+
+    def call(self, x):
+
+        x0 = x
+        x = self.mha(x)
+        x = self.norm(x)
+        x += x0
+        x = self.activation(x)
+
+        return x
+
+
+class PoolingModel(tf.keras.Model):
     def __init__(self, params):
         super().__init__()
 
@@ -109,77 +214,30 @@ class Model(tf.keras.Model):
                 tf.keras.layers.Dense(n_units),
                 tf.keras.layers.LayerNormalization(),
                 tf.keras.layers.Activation("elu"),
-                tf.keras.layers.Dense(n_units),
+                tf.keras.layers.Dense(n_units * 3),
                 tf.keras.layers.LayerNormalization(),
                 tf.keras.layers.Activation("elu"),
             ]
         )
 
-        # self.dense_up = tf.keras.layers.Dense(n_units * n_heads)
+        self.max_pooling = tf.keras.layers.GlobalMaxPool1D()
 
-        self.self_attention_modules = tf.keras.Sequential(
-            [AttentionModule(n_units, n_heads)] * 3
+        self.dense_output = tf.keras.Sequential(
+            [
+                tf.keras.layers.Dense(n_units),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.Activation("elu"),
+                tf.keras.layers.Dense(n_labels, activation="softmax"),
+            ]
         )
 
-        self.dense_output = tf.keras.layers.Dense(n_labels, activation="softmax")
-
     @tf.function
-    def call(self, x):
+    def call(self, x, training=None):
         batch_size = tf.shape(x)[0]
 
-        # print(x.shape)
-        token = tf.constant([-1.0, 1.0, -1.0])[None, None, :]
-        token = tf.tile(token, (batch_size, 1, 1))
-
-        x = tf.concat([token, x], axis=1)
-        # print(x.shape)
-
-        # plot_batch(x.numpy())
-
         x = self.embeddings(x)
-
-        # print(x.shape)
-
-        # token = self.classifier_token.repeat(batch_size, 1, 1)
-
-        # print(x.shape)
-
-        # x = self.dense_up(x)
-
-        # print(x.shape)
-
-        x = self.self_attention_modules(x)
-
-        print(x.shape)
-
-        x = x[:, 0]
-
-        # print(x.shape)
-
-        x = self.dense_output(x)
-
-        # print(x[0])
-
-        # print(x.shape)
-
-        return x
-
-
-class AttentionModule(tf.keras.layers.Layer):
-    def __init__(self, n_units, n_heads):
-        super().__init__()
-
-        self.mha = MultiHeadSelfAttention(n_units, n_heads)
-        self.norm = tf.keras.layers.LayerNormalization()
-        self.activation = tf.nn.elu
-
-    def call(self, x):
-
-        x0 = x
-        x = self.mha(x)
-        x = self.norm(x)
-        x += x0
-        x = self.activation(x)
+        x = self.max_pooling(x)
+        x = self.dense_output(x, training=training)
 
         return x
 
