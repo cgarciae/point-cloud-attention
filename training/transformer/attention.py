@@ -149,7 +149,9 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         """Builds the layer."""
         # Layers for linearly projecting the queries, keys, and values.
 
-        output_size = self.output_size if self.output_size is None else input_shape[-1]
+        output_size = (
+            self.output_size if self.output_size is not None else input_shape[-1]
+        )
 
         self.query_dense = DenseMultiHead(
             self.num_heads,
@@ -285,7 +287,7 @@ class InducedMultiHeadAttentionBlock(tf.keras.layers.Layer):
 
         self.inducing_kernel = self.add_weight(
             "inducing_kernel",
-            shape=[self.num_inducing_points, output_size],
+            shape=[1, self.num_inducing_points, output_size],
             initializer="glorot_uniform",
             dtype=self.dtype,
             trainable=True,
@@ -305,8 +307,8 @@ class InducedMultiHeadAttentionBlock(tf.keras.layers.Layer):
 
 
 class InducedMultiHeadSelfAttentionBlock(InducedMultiHeadAttentionBlock):
-    def call(self, x, **kwargs):
-        return super().call(x, x, **kwargs)
+    def __call__(self, x, **kwargs):
+        return super().__call__(x, x, **kwargs)
 
 
 class MultiHeadAttentionPooling(tf.keras.layers.Layer):

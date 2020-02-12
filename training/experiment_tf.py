@@ -6,6 +6,8 @@ import yaml
 import cytoolz as cz
 from sklearn.preprocessing import MinMaxScaler
 import time
+import dataget
+import os
 
 from . import transformer
 
@@ -18,16 +20,30 @@ def main(
     train_version: str = "max",
     test_version: str = "max",
     model: str = "attention",
+    gpu_off: bool = False,
 ):
+    if gpu_off:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
     model_dir = f"models/{train_version}_{test_version}/{int(time.time())}"
 
     with open(params_path, "r") as f:
         params = yaml.safe_load(f)
 
-    X_train = np.load(data_dir / f"X_train_{train_version}.npy")
-    y_train = np.load(data_dir / f"y_train.npy")
-    X_test = np.load(data_dir / f"X_test_{test_version}.npy")
-    y_test = np.load(data_dir / f"y_test.npy")
+    df_train, df_test = dataget.kaggle("cristiangarcia/pointcloudmnist2d").get(
+        files=["train.csv", "test.csv"]
+    )
+
+    X_train = df_train[df_train.columns[1:]].to_numpy()
+    y_train = df_train[df_train.columns[0]].to_numpy()
+    X_test = df_test[df_test.columns[1:]].to_numpy()
+    y_test = df_test[df_test.columns[0]].to_numpy()
+
+    X_train = X_train.reshape(len(X_train), -1, 3)
+    X_test = X_test.reshape(len(X_test), -1, 3)
+
+    print(X_train.shape)
+    print(X_test.shape)
 
     preprocessor = MinMaxScaler(feature_range=(-1, 1))
 
@@ -108,22 +124,21 @@ class AttentionModel(tf.keras.Model):
         n_labels = params["n_labels"]
         n_units_att = params["n_units_att"]
 
-        self.embeddings = tf.keras.Sequential(
-            [
-                tf.keras.layers.Dense(n_units),
-                tf.keras.layers.LayerNormalization(),
-                tf.keras.layers.Activation("elu"),
-            ]
-            * params["n_dense_layers"]
-        )
+        self.embeddings = tf.keras.Sequential()
 
-        self.self_attention_modules = tf.keras.Sequential(
-            [AttentionModule(n_units_att, n_heads)] * params["n_attention_layers"]
-        )
+        for _ in range(params["n_dense_layers"]):
+            self.embeddings.add(tf.keras.layers.Dense(n_units))
+            self.embeddings.add(tf.keras.layers.LayerNormalization())
+            self.embeddings.add(tf.keras.layers.Activation("elu"))
+
+        self.self_attention_modules = tf.keras.Sequential()
+
+        for _ in range(params["n_attention_layers"]):
+            self.embeddings.add(AttentionModule(n_units_att, n_heads))
 
         self.dense_output = tf.keras.layers.Dense(n_labels, activation="softmax")
 
-    @tf.function
+    # @tf.function
     def call(self, x):
         batch_size = tf.shape(x)[0]
 
@@ -132,10 +147,15 @@ class AttentionModel(tf.keras.Model):
 
         x = tf.concat([token, x], axis=1)
 
+        print(x.shape)
         x = self.embeddings(x)
+        print(x.shape)
         x = self.self_attention_modules(x)
+        print(x.shape)
         x = x[:, 0]
+        print(x.shape)
         x = self.dense_output(x)
+        print(x.shape)
 
         return x
 
@@ -144,11 +164,14 @@ class SetTransformerModel(tf.keras.Model):
     def __init__(self, params):
         super().__init__()
 
+        self.params = params
+
         input_features = params["input_features"]
         n_units = params["n_units"]
         n_heads = params["n_heads"]
         n_labels = params["n_labels"]
         n_units_att = params["n_units_att"]
+        num_inducing_points = params["num_inducing_points"]
 
         self.embeddings = tf.keras.Sequential(
             [
@@ -158,10 +181,14 @@ class SetTransformerModel(tf.keras.Model):
             ]
         )
 
-        self.self_attention_modules = tf.keras.Sequential(
-            [transformer.MultiHeadSelfAttentionBlock(n_units_att, n_heads)]
-            * params["n_attention_layers"]
-        )
+        self.self_attention_modules = tf.keras.Sequential()
+
+        for _ in range(params["n_attention_layers"]):
+            self.self_attention_modules.add(
+                transformer.MultiHeadSelfAttentionBlock(
+                    size_per_head=n_units_att, num_heads=n_heads,
+                )
+            )
 
         self.attention_pooling = transformer.MultiHeadAttentionPooling(
             1, n_units_att, n_heads
