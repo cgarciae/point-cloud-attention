@@ -7,7 +7,7 @@ n_heads: 10
 n_dense_layers: 2
 n_attention_layers: 2
 batch_size: 32
-lr: 0.002
+lr: 0.001
 
 epochs: 2000
 steps_per_epoch: 500
