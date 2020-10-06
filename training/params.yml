@@ -5,7 +5,7 @@ n_units_att: 16
 num_inducing_points: 8
 n_heads: 10
 n_dense_layers: 2
-n_attention_layers: 2
+n_layers: 2
 batch_size: 32
 lr: 0.001
 

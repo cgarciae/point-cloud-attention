@@ -5,20 +5,18 @@ from pathlib import Path
 
 import cytoolz as cz
 import dataget
+import elegy
+from elegy.nn import transformers
 import jax
 import jax.numpy as jnp
 import numpy as np
-from numpy.core.fromnumeric import squeeze
 import tensorflow as tf
 import typer
 import yaml
-from jax.experimental import optix
+from numpy.core.fromnumeric import squeeze
 from sklearn.preprocessing import MinMaxScaler
+import optax
 
-import elegy
-from elegy.nn.multi_head_attention import MultiHeadAttention
-
-from . import set_transformer
 
 np.random.seed(42)
 
@@ -30,7 +28,16 @@ def main(
     test_version: str = "max",
     model_type: str = "attention",
     gpu_off: bool = False,
+    debug: bool = False,
 ):
+
+    if debug:
+        import debugpy
+
+        print("Waiting debugger...")
+        debugpy.listen(5678)
+        debugpy.wait_for_client()
+
     if gpu_off:
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
@@ -59,25 +66,21 @@ def main(
     X_train, y_train = preprocess(X_train, y_train, params, preprocessor, mode="train")
     X_test, y_test = preprocess(X_test, y_test, params, preprocessor, mode="test")
 
-    if model_type == "attention":
-        module = Attention(
-            n_labels=params["n_labels"],
-            n_units=params["n_units"],
-            n_units_att=params["n_units_att"],
-            n_heads=params["n_heads"],
-            n_layers=params["n_attention_layers"],
-            activation=jax.nn.relu,
-        )
-    elif model_type == "pooling":
-        module = DeepSet(params, activation=jax.nn.relu)
-    else:
-        raise ValueError(f"Unknown model_type type: {model_type}")
+    module = PointCloudTransformer(
+        n_labels=params["n_labels"],
+        n_units=params["n_units"],
+        n_units_att=params["n_units_att"],
+        n_heads=params["n_heads"],
+        n_layers=params["n_layers"],
+        activation=jax.nn.relu,
+    )
 
     model = elegy.Model(
         module,
         loss=elegy.losses.SparseCategoricalCrossentropy(),
         metrics=[elegy.metrics.SparseCategoricalAccuracy()],
-        optimizer=optix.adam(params["lr"]),
+        optimizer=optax.adam(params["lr"]),
+        # run_eagerly=True,
     )
 
     model.summary(X_train[:2], depth=1)
@@ -91,17 +94,12 @@ def main(
         steps_per_epoch=params["steps_per_epoch"],
         validation_data=(X_test, y_test),
         validation_steps=params["validation_steps"],
-        callbacks=[
-            # tf.keras.callbacks.LearningRateScheduler(
-            #     tf.keras.optimizers.schedules.PiecewiseConstantDecay(
-            #         [500, 1200], [0.001, 0.0005, 0.0001]
-            #     )
-            # ),
-            elegy.callbacks.ModelCheckpoint(
-                path=f"{model_dir}/saved_model", save_best_only=True
-            ),
-            elegy.callbacks.TensorBoard(logdir=model_dir),
-        ],
+        # callbacks=[
+        #     elegy.callbacks.ModelCheckpoint(
+        #         path=f"{model_dir}/saved_model", save_best_only=True
+        #     ),
+        #     elegy.callbacks.TensorBoard(logdir=model_dir),
+        # ],
     )
 
 
@@ -129,90 +127,49 @@ def preprocess(X, y, params, preprocessor, mode):
     return X, y
 
 
-class Attention(elegy.nn.Sequential):
+class PointCloudTransformer(elegy.Module):
     def __init__(
         self,
-        n_labels,
-        n_units,
-        n_units_att,
-        n_heads,
-        n_layers,
-        activation: tp.Callable = jax.nn.relu,
+        n_labels: int,
+        n_units: int,
+        n_units_att: int,
+        n_heads: int,
+        n_layers: int,
+        activation: tp.Callable,
         **kwargs,
     ):
-        def get_first(x):
-            return x[:, 0]
+        super().__init__(**kwargs)
 
-        super().__init__(
-            lambda: [
-                elegy.nn.Linear(n_units),
-                elegy.nn.LayerNormalization(),
-                activation,
-                elegy.nn.Sequential(
-                    lambda: [
-                        set_transformer.IMAB(
-                            n_units_att,
-                            n_heads,
-                            inducing_points=20,
-                            activation=activation,
-                        )
-                        for _ in range(n_layers)
-                    ],
-                    name="transformer_encoder",
-                ),
-                set_transformer.PMA(
-                    n_labels, n_units_att, n_heads, activation=activation
-                ),
-                set_transformer.MAB(n_units_att, n_heads, activation=activation),
-                elegy.nn.Linear(1),
-                jnp.squeeze,
-                jax.nn.softmax,
-            ]
-        )
-
-
-class TransformerEncoder(elegy.nn.Sequential):
-    def __init__(
-        self, n_units, n_heads, n_layers, activation: tp.Callable = jax.nn.elu, **kwargs
-    ):
-        super().__init__(
-            lambda: [
-                TransfomerEncoderModule(n_units, n_heads, activation)
-                for _ in range(n_layers)
-            ],
-            **kwargs,
-        )
-
-    @tf.function
-    def call(self, x):
-
-        x = self.embeddings(x)
-        x = self.self_attention_modules(x)
-        x = self.attention_pooling(x)
-        x = x[:, 0]
-        x = self.dense_output(x)
-
-        return x
-
-
-class TransfomerEncoderModule(elegy.Module):
-    def __init__(self, n_units, n_heads, activation: tp.Callable = jax.nn.elu):
-        super().__init__()
+        self.n_labels = n_labels
         self.n_units = n_units
+        self.n_units_att = n_units_att
         self.n_heads = n_heads
+        self.n_layers = n_layers
         self.activation = activation
 
     def call(self, x):
-        output_size = x.shape[-1]
 
-        x = x + MultiHeadAttention(self.n_units, self.n_heads, output_size=output_size)(
-            x
+        queries = self.add_parameter(
+            "queries",
+            shape=[1, self.n_labels, self.n_units],
+            initializer=elegy.initializers.VarianceScaling(),
         )
-        x0 = x
+        queries = jnp.broadcast_to(queries, shape=x.shape[0:1] + queries.shape[1:])
+
+        x = elegy.nn.Linear(self.n_units)(x)
         x = elegy.nn.LayerNormalization()(x)
-        x = elegy.nn.Linear(output_size)(x)
-        x = x0 + self.activation(x)
-        x = elegy.nn.LayerNormalization()(x)
+
+        x = transformers.Transformer(
+            head_size=self.n_units_att,
+            num_heads=self.n_heads,
+            num_encoder_layers=self.n_layers,
+            num_decoder_layers=self.n_layers,
+            output_size=self.n_units,
+            activation=self.activation,
+        )(x, queries)
+
+        x = elegy.nn.Linear(1)(x)[..., 0]
+        x = jax.nn.softmax(x)
 
         return x
 
