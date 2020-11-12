@@ -10,7 +10,6 @@ from elegy.nn import transformers
 import jax
 import jax.numpy as jnp
 import numpy as np
-import tensorflow as tf
 import typer
 import yaml
 from numpy.core.fromnumeric import squeeze
